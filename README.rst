@@ -49,10 +49,12 @@ Installation
               "--smtp-host", "$mail_loop_smtp_host$",
               "--smtp-port", "$mail_loop_smtp_port$",
               "--smtp-user", "$mail_loop_smtp_user$",
+              "--smtp-skip-cert-validation",
               "--imap-host", "$mail_loop_imap_host$",
               "--imap-port", "$mail_loop_imap_port$",
               "--imap-user", "$mail_loop_imap_user$",
               "--imap-spam", "$mail_loop_imap_spam$",
+              "--imap-skip-cert-validation",
               "--imap-cleanup" ]
     }
 
