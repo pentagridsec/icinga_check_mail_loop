@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #
 # -----------------------------------------------------------------------------
-# Copyright (c) 2023-2025 Martin Schobert, Pentagrid AG
+# Copyright (c) 2023-2026 Martin Schobert, Pentagrid AG
 #
 # All rights reserved.
 #
@@ -248,11 +248,11 @@ def main():
 
 	parser.add_argument('--smtp-host', metavar='SMTP_HOST', help='SMTP: Hostname of the SMTP server.', required=True)
 	parser.add_argument('--smtp-port', metavar='SMTP_PORT',
-						help='SMTP: Deliver mail via this port. STARTSSL or plaintext communication is not supported.',
+						help='SMTP: Deliver mail via this port. STARTTLS or plaintext communication is not supported.',
 						type=int, default=465)
 	parser.add_argument('--smtp-user', metavar='SMTP_USER', help='SMTP: User name for login.', required=True)
 	parser.add_argument('--smtp-pass', metavar='SMTP_PASS',
-						help='SMTP: Passwort for login. Alternatively, set environment variable SMTP_PASS.',
+						help='SMTP: Password for login. Alternatively, set environment variable SMTP_PASS.',
 						default=os.getenv("SMTP_PASS"))
 
 	parser.add_argument('--imap-host', metavar='IMAP_HOST', help='IMAP: Hostname of the SMTP server.', required=True)
@@ -260,7 +260,7 @@ def main():
 						default=993)
 	parser.add_argument('--imap-user', metavar='IMAP_USER', help='IMAP: User name for login.', required=True)
 	parser.add_argument('--imap-pass', metavar='IMAP_PASS',
-						help='IMAP: Passwort for login. Alternatively, set environment variable IMAP_PASS.',
+						help='IMAP: Password for login. Alternatively, set environment variable IMAP_PASS.',
 						default=os.getenv("IMAP_PASS"))
 	parser.add_argument('--imap-spam', metavar='IMAP_SPAM', help='IMAP: Name of the spam box.')
 	parser.add_argument('--imap-cleanup', action='store_true', help="Delete processed mails on the IMAP account.")
