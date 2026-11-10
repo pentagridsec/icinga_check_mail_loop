@@ -16,6 +16,10 @@ The script returns OK if the expected UUID was found (exit code 0). If the E-mai
 was not found at all, the ERROR is returned (exit code 2). If the E-mail ended
 up in the Spam box, a WARNING is returned (exit code 1).
 
+The plugin also matches the E-mail headers against a regular expression to check
+for DKIM, SPF and DMARC results. If a mail was found on the mail server, but the
+DKIM, SPF or DMARC check failed, an ERROR is returned (exit code 2).
+
 You may want to use this check script with:
 
 - `check_rbl <https://github.com/matteocorti/check_rbl>`_
@@ -53,6 +57,9 @@ Installation
               "--imap-port", "$mail_loop_imap_port$",
               "--imap-user", "$mail_loop_imap_user$",
               "--imap-spam", "$mail_loop_imap_spam$",
+              "--check-spf", "$mail_loop_check_spf$",
+              "--check-dkim", "$mail_loop_check_dkim$",
+              "--check-dmarc", "$mail_loop_check_dmarc$",
               "--imap-cleanup" ]
     }
 
@@ -84,6 +91,12 @@ Installation
       vars.mail_loop_imap_pass = "secret"
       vars.mail_loop_imap_spam = "[Gmail]/Spam"
 
+      # Check SPF, DKIM, DMARC results in the E-mail headers.
+      vars.mail_loop_check_spf = r"Authentication-Results\\:.*pass"
+      vars.mail_loop_check_dkim = r"Authentication-Results\:.*dkim=pass"
+      vars.mail_loop_check_dmarc = r"Authentication-Results\:.*dmarc=pass"
+      #vars.mail_loop_check_spf = r"Received-SPF\:.*pass" # alternative regex for SPF check
+ 
       # Be polite and do not send too frequently.
       check_interval = 24h
       max_check_attempts = 4

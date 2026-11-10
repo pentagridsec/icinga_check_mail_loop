@@ -46,6 +46,9 @@ import sys
 import os
 import ssl
 import time
+import re
+from email import message_from_bytes
+from email.message import Message
 from email.mime.text import MIMEText
 from enum import Enum
 from typing import Optional
@@ -121,8 +124,29 @@ def smtp_connect(smtp_host: str, smtp_port: int, smtp_user: str, smtp_pass: str)
 	return server
 
 
+def check_mail_header_against_regexp(mail: Message, regexp: str) -> bool:
+	"""
+	Check whether a regular expression matches at least one header line in the mail object.
+
+	@param mail: The parsed mail object to inspect.
+	@param regexp: The regular expression to search for in the message headers.
+	@return True if the regexp matches any header line, otherwise False.
+	"""
+
+	header_text = "\n".join(f"{key}: {value}" for key, value in mail.items())
+	debug(f"IMAP: Header regexp check: regex={regexp!r}")
+
+	match = re.search(regexp, header_text, re.IGNORECASE | re.DOTALL) is not None
+	if match:
+		debug(f"IMAP: Header regexp check: regex matched successfully for {regexp!r}.")
+	else:
+		debug(f"IMAP: Header regexp check: regex did not match for {regexp!r}.")
+		debug(f"IMAP: Header regexp check: headers={header_text!r}")
+	return match
+
+
 def imap_retrieve_mail(imap_host: str, imap_port: int, imap_user: str, imap_pass: str, imap_spambox: Optional[str],
-					   expected_token: str, cleanup_flag: bool) -> MailFound:
+					   expected_token: str, cleanup_flag: bool) -> Optional[Message]:
 	"""
 	Retrieve an e-mail from an IMAP account. Search the INBOX and the Spambox for a specific token value.
 	Retry up to three times.
@@ -135,7 +159,7 @@ def imap_retrieve_mail(imap_host: str, imap_port: int, imap_user: str, imap_pass
 	@param expected_token: Lookup this token in a X-Icinga-Test-Id E-mail header.
 	@param cleanup_flag: Remove mails from the IMAP account.
 
-	@return Function returns a MailFound status.
+	@return Function returns the found mail object or None.
 	"""
 
 	# Establish IMAP connection
@@ -143,8 +167,6 @@ def imap_retrieve_mail(imap_host: str, imap_port: int, imap_user: str, imap_pass
 	debug(f"IMAP: Try to log in to {imap_host} as: {imap_user}")
 	server.login(imap_user, imap_pass)
 	debug(f"IMAP: Log in was successful.")
-
-	status = MailFound.NOT_FOUND
 
 	# Check which mailboxes to lookup. Start with the spam box (if enabled) to clean it up.
 	mailboxes = []
@@ -161,16 +183,16 @@ def imap_retrieve_mail(imap_host: str, imap_port: int, imap_user: str, imap_pass
 			time.sleep(curr_delay)
 
 		for mailbox in mailboxes:
-			status = imap_search_server(server, mailbox, expected_token, cleanup_flag)
-			if status != MailFound.NOT_FOUND:
+			mail = imap_search_server(server, mailbox, expected_token, cleanup_flag)
+			if mail is not None:
 				server.logout()
-				return status
+				return mail
 
 	server.logout()
-	return status
+	return None
 
 
-def imap_search_server(server: imaplib.IMAP4, mailbox: str, expected_token: str, cleanup_flag: bool) -> MailFound:
+def imap_search_server(server: imaplib.IMAP4, mailbox: str, expected_token: str, cleanup_flag: bool) -> Optional[Message]:
 	"""
 	Lookup token on IMAP server.
 
@@ -178,16 +200,8 @@ def imap_search_server(server: imaplib.IMAP4, mailbox: str, expected_token: str,
 	@param mailbox: Name of the mailbox, such as INBOX or Junk.
 	@param expected_token: Lookup this token in a "X-Icinga-Test-Id" E-mail header.
 	@param cleanup_flag: Remove mails from the IMAP account.
-	@return Function returns a MailFound status.
+	@return Function returns the matching mail object or None.
 	"""
-
-	class Email:
-		def __init__(self, _data):
-			self.data = _data.decode()
-			self.header = "\r\n\r\n".join(self.data.split("\r\n\r\n")[0:1])
-
-	token_found = MailFound.NOT_FOUND
-	token = ""
 
 	debug(f"IMAP: Check mail in mailbox {mailbox}.")
 	select_status, num_msg_in_mbox = server.select(mailbox)
@@ -198,32 +212,36 @@ def imap_search_server(server: imaplib.IMAP4, mailbox: str, expected_token: str,
 	typ, data_mlist = server.search(None, 'ALL')
 
 	if typ != "OK":
-		return MailFound.UNDEFINED
+		return None
 
 	for num in data_mlist[0].split():
-
 		num_str = num.decode('utf-8')
+		typ, data_mail = server.fetch(num_str, '(RFC822)')
+		if typ != "OK":
+			continue
 
-		if token_found == MailFound.NOT_FOUND:
+		debug(f"IMAP: [{mailbox}]:{num_str} Check mail {num_str}.")
+		mail = message_from_bytes(data_mail[0][1])
+		token = (mail.get("X-Icinga-Test-Id") or "").strip()
+		if token:
+			debug(f"IMAP: [{mailbox}]:{num_str} A token was found: {token}")
+			#debug("Message headers are:" + str(mail.items()))
 
-			typ, data_mail = server.fetch(num_str, '(RFC822)')
-			debug(f"IMAP: [{mailbox}]:{num_str} Check mail {num_str}.")
-			email = Email(data_mail[0][1])
-			for line in email.header.splitlines():
-
-				if line.startswith("X-Icinga-Test-Id"):
-					token = line.split("X-Icinga-Test-Id: ")[1].strip()
-					debug(f"IMAP: [{mailbox}]:{num_str} A token was found: {token}")
-
-			if token == expected_token:
-				debug(f"IMAP: [{mailbox}]:{num_str} Expected token {token} found in {mailbox}.")
-				if mailbox == "INBOX":
-					token_found = MailFound.FOUND
-				else:
-					token_found = MailFound.FOUND_IN_SPAM
-				break
+		if token == expected_token:
+			debug(f"IMAP: [{mailbox}]:{num_str} Expected token {token} found in {mailbox}.")
+			if mailbox == "INBOX":
+				mail.mail_found = MailFound.FOUND
 			else:
-				debug(f"IMAP: [{mailbox}]:{num_str} Expected token was not found in this e-mail.")
+				mail.mail_found = MailFound.FOUND_IN_SPAM
+
+			if cleanup_flag:
+				debug(f"IMAP: [{mailbox}]:{num_str} Mark mail {num_str} as deleted.")
+				server.store(num, '+FLAGS', '\\Deleted')
+				server.expunge()
+			server.close()
+			return mail
+
+		debug(f"IMAP: [{mailbox}]:{num_str} Expected token was not found in this e-mail.")
 
 		if cleanup_flag:
 			debug(f"IMAP: [{mailbox}]:{num_str} Mark mail {num_str} as deleted.")
@@ -233,7 +251,7 @@ def imap_search_server(server: imaplib.IMAP4, mailbox: str, expected_token: str,
 		server.expunge()
 	server.close()
 
-	return token_found
+	return None
 
 
 def main():
@@ -264,6 +282,14 @@ def main():
 						default=os.getenv("IMAP_PASS"))
 	parser.add_argument('--imap-spam', metavar='IMAP_SPAM', help='IMAP: Name of the spam box.')
 	parser.add_argument('--imap-cleanup', action='store_true', help="Delete processed mails on the IMAP account.")
+	parser.add_argument('--check-spf', metavar='REGEXP', nargs='?', const=r"Authentication-Results\:.*spf=pass", default=None,
+						help='Check the message headers for a regex. Default: "Authentication-Results\\:.*spf=pass".')
+	parser.add_argument('--check-dkim', metavar='REGEXP', nargs='?', const=r"Authentication-Results\:.*dkim=pass",
+						default=None,
+						help='Check the message headers for a regex. Default: "Authentication-Results\\:.*dkim=pass".')
+	parser.add_argument('--check-dmarc', metavar='REGEXP', nargs='?', const=r"Authentication-Results\:.*dmarc=pass",
+						default=None,
+						help='Check the message headers for a regex. Default: "Authentication-Results\\:.*dmarc=pass".')
 
 	parser.add_argument('--delay', metavar='SECONDS', help=f"Delay between sending and retrieving (default {delay} s).",
 						type=int, default=delay)
@@ -278,21 +304,36 @@ def main():
 	smtp_server.sendmail(args.mail_from, args.mail_to, email.as_string())
 	debug(f"SMTP: Sent e-mail with ID {_uuid} to {args.mail_to}.")
 
-	status = imap_retrieve_mail(args.imap_host, args.imap_port, args.imap_user, args.imap_pass, args.imap_spam, _uuid,
+	mail = imap_retrieve_mail(args.imap_host, args.imap_port, args.imap_user, args.imap_pass, args.imap_spam, _uuid,
 								args.imap_cleanup)
 
-	if status == MailFound.FOUND:
-		print("OK")
-		return 0
-	elif status == MailFound.FOUND_IN_SPAM:
-		debug("WARNING - Message found in Spam folder")
-		return 1
-	elif status == MailFound.NOT_FOUND:
+	if mail is None:
 		print("ERROR - Message not found")
 		return 2
 	else:
-		print("UNDEFINED - Undefined state")
-		return 3
+
+		if args.check_spf is not None and not check_mail_header_against_regexp(mail, args.check_spf):
+			print("ERROR - SPF header check failed")
+			return 2
+
+		if args.check_dkim is not None and not check_mail_header_against_regexp(mail, args.check_dkim):
+			print("ERROR - DKIM header check failed")
+			return 2
+
+		if args.check_dmarc is not None and not check_mail_header_against_regexp(mail, args.check_dmarc):
+			print("ERROR - DMARC header check failed")
+			return 2
+
+		if mail.mail_found == MailFound.FOUND:
+			print("OK")
+			return 0
+			
+		elif mail.mail_found == MailFound.FOUND_IN_SPAM:
+			debug("WARNING - Message found in Spam folder")
+			return 1
+		else:
+			print("UNDEFINED - Undefined state")
+			return 3
 
 
 if __name__ == "__main__":
